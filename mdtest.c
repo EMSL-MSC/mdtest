@@ -29,6 +29,12 @@
  *   $Author: loewe6 $
  */
 
+//DJP  Modified by Doug Petesch, Cray Inc., 5/8/2012
+//DJP  Changed mdtest to measure rates of system calls that PNNL is interested in.
+//DJP  Changed directory stat to readdir, which also has to do an opendir and closedir.
+//DJP  Added timing of file access, link and open system calls.
+//DJP  Have to close every file right after opening to avoid the max open file limit.
+
 #include "mpi.h"
 #include <math.h>
 #include <stdio.h>
@@ -347,6 +353,11 @@ void create_remove_items_helper(int dirs,
                     if (unlink(curr_item) == -1) {
                        FAIL("unable to unlink file");
                     }
+		//DJP  remove extra link also
+		    strcat(curr_item,"_link");
+                    if (unlink(curr_item) == -1) {
+                       FAIL("unable to unlink file");
+                    }
                 }
             }
         }
@@ -487,7 +498,7 @@ void mdtest_stat(int random, int dirs) {
 	
 	struct stat buf;
 	int i, parent_dir, item_num = 0;
-	char item[MAX_LEN], temp[MAX_LEN];
+	char item[MAX_LEN], link_item[MAX_LEN], temp[MAX_LEN];  //DJP
 
 	/* determine the number of items to stat*/
     int stop = 0;
@@ -517,7 +528,7 @@ void mdtest_stat(int random, int dirs) {
         }
         
 		/* create name of file/dir to stat */
-        if (dirs) {
+        if (dirs==1) {
             if (rank == 0 && verbose >= 3 && (i%ITEM_COUNT == 0) && (i != 0)) {
                 printf("stat dir: %d\n", i);
                 fflush(stdout);
@@ -550,20 +561,64 @@ void mdtest_stat(int random, int dirs) {
 
         /* below temp used to be hiername */
         if (rank == 0 && verbose >= 2) {
-            if (dirs) {
-                printf("stat   dir : %s\n", item);
+//DJP add other system calls to time
+            if (dirs==4) {
+                printf("link   file: %s\n", item);
+            } else if (dirs==3) {
+                printf("open   file: %s\n", item);
+            } else if (dirs==2) {
+                printf("access file: %s\n", item);
+            } else if (dirs==1) {
+                printf("readdir dir: %s\n", item);
             } else {
                 printf("stat   file: %s\n", item);
             }
             fflush(stdout);
         }
-        if (stat(item, &buf) == -1) {
-            if (dirs) {
-                FAIL("unable to stat directory");
+//DJP        if (stat(item, &buf) == -1) {
+//DJP            if (dirs) {
+//DJP                FAIL("unable to stat directory");
+//DJP            } else {
+//DJP                FAIL("unable to stat file");
+//DJP            }
+//DJP        }
+            if (dirs==4) {
+              sprintf(link_item, "%s_link", item);
+              if (link(item,link_item) < 0) {
+                FAIL("unable to link file");
+	      }
+            } else if (dirs==3) {
+	      int fd;
+              if ((fd=open(item,O_RDONLY)) < 0) {
+                FAIL("unable to open file");
+	      }
+              if (close(fd) < 0) {
+                FAIL("unable to close file");
+	      }
+            } else if (dirs==2) {
+              if (access(item,W_OK|F_OK) < 0) {
+                FAIL("unable to access file");
+	      }
+            } else if (dirs==1) {
+	      DIR *dirbuf;
+	      struct dirent *y;
+	      dirbuf=opendir(item);
+	      if (dirbuf == NULL) {
+                FAIL("unable to opendir directory");
+	      }
+              y=readdir(dirbuf);
+              if (y == NULL) {
+                FAIL("unable to readdir directory");
+	      }
+              if (closedir(dirbuf) < 0) {
+                FAIL("unable to closedir directory");
+	      }
             } else {
+              if (stat(item, &buf) == -1) {
                 FAIL("unable to stat file");
+              }
             }
-        }
+//DJP
     }
 }
 
@@ -764,7 +819,7 @@ void directory_test(int iteration, int ntasks) {
     if (verbose >= 1 && rank == 0) {
         printf("   Directory creation: %10.3f sec, %10.3f ops/sec\n",
               t[1] - t[0], summary_table[iteration].entry[0]);
-        printf("   Directory stat    : %10.3f sec, %10.3f ops/sec\n",
+        printf("   Directory readdir : %10.3f sec, %10.3f ops/sec\n",   //DJP
               t[2] - t[1], summary_table[iteration].entry[1]);
         printf("   Directory removal : %10.3f sec, %10.3f ops/sec\n",
               t[3] - t[2], summary_table[iteration].entry[2]);
@@ -774,7 +829,7 @@ void directory_test(int iteration, int ntasks) {
 
 void file_test(int iteration, int ntasks) {
     int size;
-    double t[4] = {0};
+    double t[6] = {0};  //DJP
 
     MPI_Barrier(testcomm);
     t[0] = MPI_Wtime();
@@ -816,24 +871,59 @@ void file_test(int iteration, int ntasks) {
             }
         }
         
-		/* stat files */
-		if (random_seed > 0) {
+	/* stat files */
+	if (random_seed > 0) {
     	    mdtest_stat(1,0);
-		} else {
+	} else {
     	    mdtest_stat(0,0);
-		}
+	}
+
+    if (barriers) MPI_Barrier(testcomm);
+    t[2] = MPI_Wtime();
+
+        if (unique_dir_per_task) {
+            unique_dir_access(STAT_SUB_DIR);
+            if (!time_unique_dir_overhead) {
+                offset_timers(t, 2);
+            }
+        }
+        
+    	    mdtest_stat(0,2);  //DJP  access
+
+    if (barriers) MPI_Barrier(testcomm);
+    t[3] = MPI_Wtime();
+
+        if (unique_dir_per_task) {
+            unique_dir_access(STAT_SUB_DIR);
+            if (!time_unique_dir_overhead) {
+                offset_timers(t, 3);
+            }
+        }
+        
+    	    mdtest_stat(0,3);  //DJP  open+close
+
+    if (barriers) MPI_Barrier(testcomm);
+    t[4] = MPI_Wtime();
+
+        if (unique_dir_per_task) {
+            unique_dir_access(STAT_SUB_DIR);
+            if (!time_unique_dir_overhead) {
+                offset_timers(t, 4);
+            }
+        }
+        
+    	    mdtest_stat(0,4);  //DJP  link
+
+    if (barriers) MPI_Barrier(testcomm);
+    t[5] = MPI_Wtime();
+
     }
 
-    if (barriers) {
-        MPI_Barrier(testcomm);
-    }
-    t[2] = MPI_Wtime();
-    
     if (remove_only) {
         if (unique_dir_per_task) {
             unique_dir_access(RM_SUB_DIR);
             if (!time_unique_dir_overhead) {
-                offset_timers(t, 2);
+                offset_timers(t, 5);
             }
         }
     }
@@ -852,16 +942,16 @@ void file_test(int iteration, int ntasks) {
     if (barriers) {
         MPI_Barrier(testcomm);
     }
-    t[3] = MPI_Wtime();
+    //DJP t[3] = MPI_Wtime();
     
     if (remove_only) {
         if (unique_dir_per_task) {
             unique_dir_access(RM_UNI_DIR);
         }
     }
-    if (unique_dir_per_task && !time_unique_dir_overhead) {
-        offset_timers(t, 3);
-    }
+    //DJP if (unique_dir_per_task && !time_unique_dir_overhead) {
+        //DJP offset_timers(t, 3);
+    //DJP }
     
     MPI_Comm_size(testcomm, &size);
 
@@ -876,10 +966,20 @@ void file_test(int iteration, int ntasks) {
     } else {
         summary_table[iteration].entry[4] = 0;
     }
-    if (remove_only) {
+    if (stat_only) {
         summary_table[iteration].entry[5] = items*size/(t[3] - t[2]);
     } else {
         summary_table[iteration].entry[5] = 0;
+    }
+    if (stat_only) {
+        summary_table[iteration].entry[6] = items*size/(t[4] - t[3]);
+    } else {
+        summary_table[iteration].entry[6] = 0;
+    }
+    if (stat_only) {
+        summary_table[iteration].entry[7] = items*size/(t[5] - t[4]);
+    } else {
+        summary_table[iteration].entry[7] = 0;
     }
 
     if (verbose >= 1 && rank == 0) {
@@ -887,8 +987,12 @@ void file_test(int iteration, int ntasks) {
            t[1] - t[0], summary_table[iteration].entry[3]);
         printf("   File stat         : %10.3f sec, %10.3f ops/sec\n",
            t[2] - t[1], summary_table[iteration].entry[4]);
-        printf("   File removal      : %10.3f sec, %10.3f ops/sec\n",
+        printf("   File access       : %10.3f sec, %10.3f ops/sec\n",
            t[3] - t[2], summary_table[iteration].entry[5]);
+        printf("   File open+close   : %10.3f sec, %10.3f ops/sec\n",
+           t[4] - t[3], summary_table[iteration].entry[6]);
+        printf("   File link         : %10.3f sec, %10.3f ops/sec\n",
+           t[5] - t[4], summary_table[iteration].entry[7]);
         fflush(stdout);
     }
 }
@@ -975,7 +1079,7 @@ void summarize_results(int iterations) {
         if (dirs_only && !files_only) {
             stop = 3;
         } else {
-            stop = 6;
+            stop = 8;  //DJP
         }
 
         /* special case: if no directory or file tests, skip all */
@@ -1022,11 +1126,13 @@ void summarize_results(int iterations) {
                 sd = sqrt(var);
                 switch (i) {
                     case 0: strcpy(access, "Directory creation:"); break;
-                    case 1: strcpy(access, "Directory stat    :"); break;
+                    case 1: strcpy(access, "Directory readdir :"); break;
                     case 2: strcpy(access, "Directory removal :"); break;
                     case 3: strcpy(access, "File creation     :"); break;
                     case 4: strcpy(access, "File stat         :"); break;
-                    case 5: strcpy(access, "File removal      :"); break;
+                    case 5: strcpy(access, "File access       :"); break;
+                    case 6: strcpy(access, "File open+close   :"); break;
+                    case 7: strcpy(access, "File link         :"); break;
                    default: strcpy(access, "ERR");                 break;
                 }
                 printf("   %s ", access);
@@ -1085,6 +1191,8 @@ void summarize_results(int iterations) {
         }
         
         /* calculate tree create/remove rates */
+
+/* DJP  Using table entries 6 and 7 for timing other calls.  Not timing tree create/remove anymore
         for (i = 6; i < tableSize; i++) {
             min = max = all[i];
             for (j = 0; j < iterations; j++) {
@@ -1116,6 +1224,8 @@ void summarize_results(int iterations) {
             fflush(stdout);
             sum = var = 0;
         }
+DJP */
+
     }
 }
 
@@ -1634,15 +1744,15 @@ int main(int argc, char **argv) {
                 }
                 MPI_Barrier(MPI_COMM_WORLD);
                 endCreate = MPI_Wtime();
-                summary_table[j].entry[6] = 
-                    num_dirs_in_tree / (endCreate - startCreate);
+                //DJP summary_table[j].entry[6] = 
+                    //DJP num_dirs_in_tree / (endCreate - startCreate);
                 if (verbose >= 1 && rank == 0) {
                     printf("   Tree creation     : %10.3f sec, %10.3f ops/sec\n",
                         (endCreate - startCreate), summary_table[j].entry[6]);
 					fflush(stdout);
                 }
             } else {
-               summary_table[j].entry[6] = 0;
+               //DJP summary_table[j].entry[6] = 0;
             }
             sprintf(unique_mk_dir, "%s/%s.0", testdir, base_tree_name);
             sprintf(unique_chdir_dir, "%s/%s.0", testdir, base_tree_name);
@@ -1713,15 +1823,15 @@ int main(int argc, char **argv) {
                 }
                 MPI_Barrier(MPI_COMM_WORLD);
                 endCreate = MPI_Wtime();
-                summary_table[j].entry[7] = num_dirs_in_tree 
-                    / (endCreate - startCreate);
+                //DJP summary_table[j].entry[7] = num_dirs_in_tree 
+                    //DJP / (endCreate - startCreate);
                 if (verbose >= 1 && rank == 0) {
                     printf("   Tree removal      : %10.3f sec, %10.3f ops/sec\n",
                         (endCreate - startCreate), summary_table[j].entry[7]);
 					fflush(stdout);
                 }                    
             } else {
-                summary_table[j].entry[7] = 0;
+                //DJP summary_table[j].entry[7] = 0;
             }
         }
         summarize_results(iterations);
