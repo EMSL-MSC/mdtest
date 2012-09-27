@@ -582,37 +582,37 @@ void mdtest_stat(int random, int dirs) {
 //DJP                FAIL("unable to stat file");
 //DJP            }
 //DJP        }
-            if (dirs==4) {
+          if (dirs==4) {
               sprintf(link_item, "%s_link", item);
               if (link(item,link_item) < 0) {
                 FAIL("unable to link file");
-	      }
-            } else if (dirs==3) {
-	      int fd;
+	          }
+          } else if (dirs==3) {
+	          int fd;
               if ((fd=open(item,O_RDONLY)) < 0) {
                 FAIL("unable to open file");
-	      }
+	          }
               if (close(fd) < 0) {
                 FAIL("unable to close file");
-	      }
-            } else if (dirs==2) {
+	          }
+          } else if (dirs==2) {
               if (access(item,W_OK|F_OK) < 0) {
                 FAIL("unable to access file");
-	      }
-            } else if (dirs==1) {
-	      DIR *dirbuf;
-	      struct dirent *y;
-	      dirbuf=opendir(item);
-	      if (dirbuf == NULL) {
-                FAIL("unable to opendir directory");
-	      }
+	          }
+          } else if (dirs==1) {
+    	      DIR *dirbuf;
+    	      struct dirent *y;
+    	      dirbuf=opendir(item);
+    	      if (dirbuf == NULL) {
+                    FAIL("unable to opendir directory");
+    	      }
               y=readdir(dirbuf);
               if (y == NULL) {
                 FAIL("unable to readdir directory");
-	      }
+	          }
               if (closedir(dirbuf) < 0) {
                 FAIL("unable to closedir directory");
-	      }
+	          }
             } else {
               if (stat(item, &buf) == -1) {
                 FAIL("unable to stat file");
@@ -1176,6 +1176,8 @@ void summarize_results(int iterations) {
                     case 2: strcpy(access, "Directory removal :"); break;
                     case 3: strcpy(access, "File creation     :"); break;
                     case 4: strcpy(access, "File stat         :"); break;
+                    case 6: strcpy(access, "File open+close   :"); break;
+                    case 7: strcpy(access, "File link         :"); break;
                     case 5: strcpy(access, "File removal      :"); break;
                    default: strcpy(access, "ERR");                 break;
                 }
